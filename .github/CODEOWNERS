@@ -1,9 +1,9 @@
 # Todo cambio requiere revisión de un responsable humano.
-# Reemplaza @OWNER por tu usuario de GitHub (o un equipo, p. ej. @once06/lideres).
-*                   @OWNER
+# Reemplaza @marcovasa por tu usuario de GitHub (o un equipo, p. ej. @once06/lideres).
+*                   @marcovasa
 
 # El pipeline, la infraestructura y las reglas de los agentes solo los aprueba el líder técnico.
-/.github/           @OWNER
-/scripts/           @OWNER
-/AGENTS.md          @OWNER
-**/Dockerfile       @OWNER
+/.github/           @marcovasa
+/scripts/           @marcovasa
+/AGENTS.md          @marcovasa
+**/Dockerfile       @marcovasa
