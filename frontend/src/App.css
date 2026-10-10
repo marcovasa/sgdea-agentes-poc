@@ -1,0 +1,133 @@
+:root {
+  --bg: #f6f5f1;
+  --panel: #ffffff;
+  --ink: #1d2433;
+  --muted: #5d6677;
+  --line: #dfdcd3;
+  --accent: #0f6b5c;
+  --error: #b42318;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.sub {
+  color: var(--muted);
+  margin: 4px 0 20px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 12px;
+}
+
+.formulario {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.formulario .ancho {
+  grid-column: 1 / -1;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+}
+
+button {
+  font: inherit;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  justify-self: start;
+}
+
+.busqueda {
+  display: flex;
+  gap: 8px;
+}
+
+.busqueda input {
+  flex: 1;
+}
+
+.contador {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ok {
+  color: var(--accent);
+}
+
+.error {
+  color: var(--error);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+@media (max-width: 720px) {
+  .formulario {
+    grid-template-columns: 1fr;
+  }
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}

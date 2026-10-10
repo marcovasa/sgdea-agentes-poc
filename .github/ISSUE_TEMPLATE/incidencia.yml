@@ -1,0 +1,51 @@
+name: Incidencia QA
+description: Error reportado por QA o por el cliente
+title: "[INC] "
+labels: ["incidencia"]
+body:
+  - type: input
+    id: hu
+    attributes:
+      label: HU relacionada
+      placeholder: HU-RAD-01
+    validations:
+      required: true
+  - type: dropdown
+    id: severidad
+    attributes:
+      label: Severidad
+      options: [Bloqueante, Alta, Media, Baja]
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Pasos para reproducir
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Resultado esperado
+    validations:
+      required: true
+  - type: textarea
+    id: obtenido
+    attributes:
+      label: Resultado obtenido
+    validations:
+      required: true
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Criterios de aceptación
+      description: Lista verificable. Es lo que el agente debe cumplir y probar.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: evidencias
+    attributes:
+      label: Evidencias
+      description: Capturas, logs, enlaces

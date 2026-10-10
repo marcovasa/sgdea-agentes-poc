@@ -1,0 +1,114 @@
+# Merge a main → se construye UNA vez → dev automático → prod con aprobación humana.
+# Reemplaza el deploy manual desde el equipo del desarrollador.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GCP_RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA }}
+  REGISTRO: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.AR_REPO || 'sgdea-poc' }}
+  PREFIJO: ${{ vars.SERVICE_PREFIX || 'sgdea-poc' }}
+
+jobs:
+  construir:
+    if: vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.imagenes.outputs.api }}
+      web: ${{ steps.imagenes.outputs.web }}
+      version: ${{ steps.imagenes.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Construir y publicar imágenes
+        id: imagenes
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          version="main-${GITHUB_SHA::7}"
+          api="${REGISTRO}/api:${version}"
+          web="${REGISTRO}/web:${version}"
+          docker build -t "$api" backend
+          docker build -t "$web" frontend
+          docker push "$api"
+          docker push "$web"
+          echo "api=$api" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  dev:
+    needs: construir
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ steps.web.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Desplegar API
+        id: api
+        run: |
+          url=$(bash scripts/cloudrun_desplegar.sh "${PREFIJO}-api-dev" "${{ needs.construir.outputs.api }}" \
+            "APP_VERSION=${{ needs.construir.outputs.version }},SEED_DEMO=true")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Desplegar web
+        id: web
+        run: |
+          url=$(bash scripts/cloudrun_desplegar.sh "${PREFIJO}-web-dev" "${{ needs.construir.outputs.web }}" \
+            "API_URL=${{ steps.api.outputs.url }}")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Prueba de humo
+        run: |
+          bash scripts/esperar_salud.sh "${{ steps.api.outputs.url }}/health"
+          bash scripts/esperar_salud.sh "${{ steps.web.outputs.url }}/"
+
+  prod:
+    # El environment "prod" tiene revisores obligatorios: el job espera aprobación humana.
+    needs: [construir, dev]
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+      url: ${{ steps.web.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Desplegar API (misma imagen que dev)
+        id: api
+        run: |
+          url=$(bash scripts/cloudrun_desplegar.sh "${PREFIJO}-api-prod" "${{ needs.construir.outputs.api }}" \
+            "APP_VERSION=${{ needs.construir.outputs.version }},SEED_DEMO=true")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Desplegar web (misma imagen que dev)
+        id: web
+        run: |
+          url=$(bash scripts/cloudrun_desplegar.sh "${PREFIJO}-web-prod" "${{ needs.construir.outputs.web }}" \
+            "API_URL=${{ steps.api.outputs.url }}")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Prueba de humo
+        run: |
+          bash scripts/esperar_salud.sh "${{ steps.api.outputs.url }}/health"
+          bash scripts/esperar_salud.sh "${{ steps.web.outputs.url }}/"

@@ -1,0 +1,351 @@
+# Agente en la nube: un issue etiquetado se convierte en un PR.
+#
+#   Etiqueta agente:gemini  → Gemini CLI (Vertex AI)
+#   Etiqueta agente:claude  → Claude Code (Claude en Vertex AI)
+#   Etiqueta agente:ambos   → los dos en paralelo, dos PRs para comparar
+#
+# Diseño de seguridad:
+#   - El job "resolver" (donde corre el agente) solo tiene permisos de LECTURA sobre el repo
+#     y una cuenta de servicio con roles/aiplatform.user. No puede hacer push ni abrir PRs.
+#   - El job "publicar" (sin IA) aplica el parche, verifica rutas protegidas y abre el PR.
+#   - Nada llega a main sin PR, CI en verde y aprobación humana.
+name: Agente
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Número del issue
+        required: true
+      motor:
+        description: Motor a usar
+        type: choice
+        options: [ambos, gemini, claude]
+        default: ambos
+
+permissions:
+  contents: read
+
+jobs:
+  preparar:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.label.name, 'agente:')
+    runs-on: ubuntu-latest
+    outputs:
+      motores: ${{ steps.motores.outputs.motores }}
+      issue: ${{ steps.motores.outputs.issue }}
+    steps:
+      - id: motores
+        env:
+          EVENTO: ${{ github.event_name }}
+          ETIQUETA: ${{ github.event.label.name }}
+          ISSUE_EVENTO: ${{ github.event.issue.number }}
+          ISSUE_MANUAL: ${{ inputs.issue }}
+          MOTOR_MANUAL: ${{ inputs.motor }}
+        run: |
+          if [[ "$EVENTO" == "workflow_dispatch" ]]; then
+            motor="$MOTOR_MANUAL"; issue="$ISSUE_MANUAL"
+          else
+            motor="${ETIQUETA#agente:}"; issue="$ISSUE_EVENTO"
+          fi
+          case "$motor" in
+            gemini) lista='["gemini"]' ;;
+            claude) lista='["claude"]' ;;
+            ambos)  lista='["gemini","claude"]' ;;
+            *) echo "::error::Motor desconocido: $motor"; exit 1 ;;
+          esac
+          [[ "$issue" =~ ^[0-9]+$ ]] || { echo "::error::Número de issue inválido: $issue"; exit 1; }
+          echo "motores=$lista" >> "$GITHUB_OUTPUT"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+
+  resolver:
+    needs: preparar
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        motor: ${{ fromJSON(needs.preparar.outputs.motores) }}
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    env:
+      ISSUE: ${{ needs.preparar.outputs.issue }}
+      MOTOR: ${{ matrix.motor }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependencias (para que el agente pueda correr tests)
+        run: |
+          pip install -r backend/requirements-dev.txt
+          (cd frontend && npm ci)
+
+      - name: Preparar contexto del issue
+        id: contexto
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .agent
+          gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json number,title,body,labels,comments > .agent/issue.json
+          jq -r '
+            "# Issue #\(.number): \(.title)\n\n" +
+            "Etiquetas: \([.labels[].name] | join(", "))\n\n" +
+            "## Descripción\n\n\(.body // "")\n\n" +
+            (if (.comments | length) > 0 then
+              "## Comentarios\n\n" + ([.comments[] | "**\(.author.login)**: \(.body)"] | join("\n\n"))
+            else "" end)
+          ' .agent/issue.json > .agent/issue.md
+          echo "titulo=$(jq -r .title .agent/issue.json | tr -d '\n' | cut -c1-120)" >> "$GITHUB_OUTPUT"
+          {
+            echo "texto<<FIN_PROMPT_7f3a"
+            cat .github/agente/prompt-resolver.md
+            echo "FIN_PROMPT_7f3a"
+          } >> "$GITHUB_OUTPUT"
+          echo "inicio=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      # ---------- Motor 1: Gemini CLI sobre Vertex AI ----------
+      - name: Gemini CLI resuelve el issue
+        if: matrix.motor == 'gemini'
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: "true"
+        with:
+          use_vertex_ai: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          gcp_location: ${{ vars.GOOGLE_CLOUD_LOCATION || 'global' }}
+          gcp_workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_AGENT_SA }}
+          gemini_model: ${{ vars.GEMINI_MODEL }}
+          workflow_name: agente-gemini
+          prompt: ${{ steps.contexto.outputs.texto }}
+          settings: |-
+            {
+              "model": { "maxSessionTurns": 80 },
+              "tools": {
+                "core": [
+                  "list_directory", "read_file", "read_many_files", "glob", "grep_search",
+                  "search_file_content", "write_file", "replace",
+                  "run_shell_command(cd)", "run_shell_command(ls)", "run_shell_command(cat)",
+                  "run_shell_command(pytest)", "run_shell_command(python)", "run_shell_command(ruff)",
+                  "run_shell_command(bandit)", "run_shell_command(npm)", "run_shell_command(npx)",
+                  "run_shell_command(git diff)", "run_shell_command(git status)"
+                ]
+              }
+            }
+
+      # ---------- Motor 2: Claude Code con Claude en Vertex AI ----------
+      - name: Autenticar en GCP para Claude (WIF)
+        if: matrix.motor == 'claude'
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_AGENT_SA }}
+
+      - name: Claude Code resuelve el issue
+        if: matrix.motor == 'claude'
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_VERTEX_PROJECT_ID: ${{ steps.auth.outputs.project_id }}
+          CLOUD_ML_REGION: ${{ vars.CLOUD_ML_REGION || 'us-east5' }}
+        with:
+          use_vertex: "true"
+          github_token: ${{ github.token }}
+          prompt: ${{ steps.contexto.outputs.texto }}
+          claude_args: >-
+            --model ${{ vars.CLAUDE_MODEL || 'claude-sonnet-5' }}
+            --max-turns 80
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,LS,Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(pytest:*),Bash(python:*),Bash(ruff:*),Bash(bandit:*),Bash(npm:*),Bash(npx:*),Bash(git diff:*),Bash(git status:*)"
+
+      # ---------- Verificación independiente del agente ----------
+      - name: Verificar el resultado (no confía en lo que diga el agente)
+        if: always()
+        id: verificacion
+        env:
+          INICIO: ${{ steps.contexto.outputs.inicio }}
+          TITULO: ${{ steps.contexto.outputs.titulo }}
+        run: |
+          set +e
+          mkdir -p .agent
+          chequeo() {
+            local nombre="$1"; shift
+            if (eval "$@") > /tmp/salida.txt 2>&1; then
+              echo "| $nombre | ✅ |" >> .agent/verificacion.md
+            else
+              echo "| $nombre | ❌ |" >> .agent/verificacion.md
+              fallos=$((fallos+1))
+            fi
+          }
+          fallos=0
+          printf '| Verificación | Resultado |\n|---|---|\n' > .agent/verificacion.md
+          chequeo "Backend · ruff"     "cd backend && ruff check . && ruff format --check ."
+          chequeo "Backend · bandit"   "cd backend && bandit -q -c pyproject.toml -r app"
+          chequeo "Backend · pytest"   "cd backend && pytest -q"
+          chequeo "Frontend · eslint"  "cd frontend && npm run lint"
+          chequeo "Frontend · tsc"     "cd frontend && npm run typecheck"
+          chequeo "Frontend · vitest"  "cd frontend && npm test"
+          chequeo "Frontend · build"   "cd frontend && npm run build"
+
+          git add -A -- . ':(exclude).agent' ':(exclude).gemini' ':(exclude)frontend/dist'
+          git diff --cached --binary > .agent/cambios.patch
+          git diff --cached --stat > .agent/estadistica.txt
+          archivos=$(git diff --cached --name-only | wc -l)
+          duracion=$(( ( $(date +%s) - INICIO ) / 60 ))
+          jq -n --arg motor "$MOTOR" --arg issue "$ISSUE" --arg titulo "$TITULO" \
+                --argjson fallos "$fallos" --argjson archivos "$archivos" --argjson minutos "$duracion" \
+                --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                '{motor:$motor, issue:$issue, titulo:$titulo, fallos:$fallos, archivos:$archivos, minutos:$minutos, run:$run}' \
+                > .agent/meta.json
+          [[ -f .agent/resumen.md ]] || echo "_El agente no dejó resumen._" > .agent/resumen.md
+          cat .agent/verificacion.md
+          cat .agent/estadistica.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agente-${{ matrix.motor }}-${{ needs.preparar.outputs.issue }}
+          path: |
+            .agent/cambios.patch
+            .agent/resumen.md
+            .agent/verificacion.md
+            .agent/estadistica.txt
+            .agent/meta.json
+          retention-days: 30
+
+  publicar:
+    needs: [preparar, resolver]
+    if: always() && needs.preparar.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        motor: ${{ fromJSON(needs.preparar.outputs.motores) }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      ISSUE: ${{ needs.preparar.outputs.issue }}
+      MOTOR: ${{ matrix.motor }}
+      RAMA: agente/${{ matrix.motor }}/issue-${{ needs.preparar.outputs.issue }}
+    steps:
+      # Token de la GitHub App "agente" (recomendado): los PRs que abre SÍ disparan el CI.
+      - name: Token de la GitHub App
+        id: app
+        if: vars.APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token || secrets.AGENT_PAT || github.token }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: agente-${{ matrix.motor }}-${{ needs.preparar.outputs.issue }}
+          path: .agent
+
+      - name: Aplicar cambios y verificar rutas protegidas
+        id: aplicar
+        run: |
+          if [[ ! -s .agent/cambios.patch ]]; then
+            echo "vacio=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git apply --index .agent/cambios.patch
+          prohibidas='^(\.github/|scripts/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$|\.gitignore$|.*Dockerfile$|frontend/nginx\.conf$)'
+          if git diff --cached --name-only | grep -Eq "$prohibidas"; then
+            echo "::error::El agente modificó rutas protegidas; no se publica el PR."
+            git diff --cached --name-only | grep -E "$prohibidas"
+            echo "bloqueado=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "vacio=false" >> "$GITHUB_OUTPUT"
+
+      - name: Abrir o actualizar el PR
+        if: steps.aplicar.outputs.vacio == 'false' && steps.aplicar.outputs.bloqueado != 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.AGENT_PAT || github.token }}
+        run: |
+          titulo=$(jq -r .titulo .agent/meta.json)
+          minutos=$(jq -r .minutos .agent/meta.json)
+          run_url=$(jq -r .run .agent/meta.json)
+          git config user.name "agente-${MOTOR}"
+          git config user.email "agente-${MOTOR}@users.noreply.github.com"
+          git checkout -B "$RAMA"
+          git commit -m "fix: ${titulo} (#${ISSUE})" -m "Generado por el agente ${MOTOR} desde el issue #${ISSUE}."
+          git push --force origin "HEAD:refs/heads/${RAMA}"
+
+          for etiqueta in agente "motor:${MOTOR}"; do
+            gh label create "$etiqueta" --color 5319e7 2>/dev/null || true
+          done
+
+          {
+            echo "## 🤖 PR generado por el agente \`${MOTOR}\`"
+            echo
+            echo "Relacionado con #${ISSUE} · duración del agente: ${minutos} min · [ejecución](${run_url})"
+            echo
+            echo "### Resumen del agente"
+            cat .agent/resumen.md
+            echo
+            echo "### Verificación independiente (antes del CI)"
+            cat .agent/verificacion.md
+            echo
+            echo "<details><summary>Archivos tocados</summary>"
+            echo
+            echo '```'
+            cat .agent/estadistica.txt
+            echo '```'
+            echo "</details>"
+            echo
+            echo "---"
+            echo "**Revisor humano:** valida en el preview (comentario del bot) y aprueba solo si cumple los criterios de aceptación."
+          } > /tmp/cuerpo.md
+
+          existente=$(gh pr list --head "$RAMA" --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$existente" ]]; then
+            gh pr edit "$existente" --body-file /tmp/cuerpo.md
+            url=$(gh pr view "$existente" --json url --jq .url)
+          else
+            url=$(gh pr create --base "${{ github.event.repository.default_branch }}" --head "$RAMA" \
+              --title "[${MOTOR}] ${titulo}" --body-file /tmp/cuerpo.md \
+              --label agente --label "motor:${MOTOR}")
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Informar en el issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.pr.outputs.url }}
+          VACIO: ${{ steps.aplicar.outputs.vacio }}
+          BLOQUEADO: ${{ steps.aplicar.outputs.bloqueado }}
+        run: |
+          if [[ -n "$URL" ]]; then
+            msg="🤖 El agente **${MOTOR}** propuso una solución: ${URL}"
+          elif [[ "$BLOQUEADO" == "true" ]]; then
+            msg="⛔ El agente **${MOTOR}** intentó modificar rutas protegidas. No se publicó PR. Revisa la ejecución."
+          elif [[ "$VACIO" == "true" ]]; then
+            msg=$(printf '⚠️ El agente **%s** no hizo cambios. Su explicación:\n\n%s' "$MOTOR" "$(cat .agent/resumen.md 2>/dev/null)")
+          else
+            msg="❌ El agente **${MOTOR}** falló. Revisa la ejecución: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$msg"

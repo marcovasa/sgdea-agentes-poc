@@ -1,0 +1,97 @@
+# Compuertas de calidad: corren en todo PR y en cada push a main.
+# La protección de rama exige el check "ci-ok" (agrega todos los jobs).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check . && ruff format --check .
+      - name: Seguridad (bandit)
+        run: bandit -q -c pyproject.toml -r app
+      - name: Tests (pytest)
+        run: pytest --cov=app --cov-report=term-missing
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Lint (eslint)
+        run: npm run lint
+      - name: Tipos (tsc)
+        run: npm run typecheck
+      - name: Tests (vitest)
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  rutas-protegidas:
+    name: rutas-protegidas
+    # Solo aplica a ramas creadas por agentes: no pueden tocar pipeline, infra ni reglas.
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'agente/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verificar archivos tocados
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          prohibidas='^(\.github/|scripts/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$|\.gitignore$|.*Dockerfile$|frontend/nginx\.conf$)'
+          tocadas=$(git diff --name-only "$BASE"...HEAD)
+          echo "$tocadas"
+          if echo "$tocadas" | grep -Eq "$prohibidas"; then
+            echo "::error::El PR de un agente modifica rutas protegidas:"
+            echo "$tocadas" | grep -E "$prohibidas"
+            exit 1
+          fi
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [backend, frontend, rutas-protegidas]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resultado agregado
+        env:
+          RESULTADOS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTADOS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTADOS" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null; then
+            exit 1
+          fi

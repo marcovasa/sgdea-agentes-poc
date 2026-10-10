@@ -1,0 +1,115 @@
+# Cada PR se despliega en Cloud Run como revisión SIN tráfico con URL propia,
+# para que QA y el revisor validen el cambio antes del merge.
+name: Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GCP_RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA }}
+  REGISTRO: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.AR_REPO || 'sgdea-poc' }}
+  PREFIJO: ${{ vars.SERVICE_PREFIX || 'sgdea-poc' }}
+  TAG: pr-${{ github.event.pull_request.number }}
+
+jobs:
+  desplegar:
+    name: desplegar-preview
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticar en GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Construir y publicar imágenes
+        id: imagenes
+        env:
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          version="${TAG}-${SHA::7}"
+          api="${REGISTRO}/api:${version}"
+          web="${REGISTRO}/web:${version}"
+          docker build -t "$api" backend
+          docker build -t "$web" frontend
+          docker push "$api"
+          docker push "$web"
+          echo "api=$api" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Desplegar API (sin tráfico)
+        id: api
+        run: |
+          url=$(bash scripts/cloudrun_desplegar.sh "${PREFIJO}-api-preview" "${{ steps.imagenes.outputs.api }}" \
+            "APP_VERSION=${{ steps.imagenes.outputs.version }},SEED_DEMO=true" "$TAG")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Desplegar web (sin tráfico)
+        id: web
+        run: |
+          url=$(bash scripts/cloudrun_desplegar.sh "${PREFIJO}-web-preview" "${{ steps.imagenes.outputs.web }}" \
+            "API_URL=${{ steps.api.outputs.url }}" "$TAG")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Prueba de humo
+        run: |
+          bash scripts/esperar_salud.sh "${{ steps.api.outputs.url }}/health"
+          bash scripts/esperar_salud.sh "${{ steps.web.outputs.url }}/"
+
+      - name: Comentar URLs en el PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          WEB: ${{ steps.web.outputs.url }}
+          API: ${{ steps.api.outputs.url }}
+          VERSION: ${{ steps.imagenes.outputs.version }}
+        run: |
+          marca='<!-- preview-cloudrun -->'
+          cuerpo=$(printf '%s\n### 🔎 Preview en Cloud Run\n\n| | URL |\n|---|---|\n| Web | %s |\n| API | %s/docs |\n\nVersión `%s` · revisión sin tráfico, se elimina al cerrar el PR.\n' \
+            "$marca" "$WEB" "$API" "$VERSION")
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${marca}\")) | .id" | head -n1)
+          if [[ -n "$id" ]]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="$cuerpo" > /dev/null
+          else
+            gh pr comment "$PR" --body "$cuerpo"
+          fi
+
+  limpiar:
+    name: limpiar-preview
+    if: github.event.action == 'closed' && vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Quitar tags del PR
+        run: |
+          for svc in "${PREFIJO}-api-preview" "${PREFIJO}-web-preview"; do
+            gcloud run services update-traffic "$svc" --region "$GCP_REGION" --remove-tags "$TAG" --quiet || true
+          done
