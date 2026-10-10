@@ -182,8 +182,8 @@ jobs:
           set +e
           mkdir -p .agent
           chequeo() {
-            local nombre="$1"; shift
-            if (eval "$@") > /tmp/salida.txt 2>&1; then
+            local nombre="$1" comando="$2"
+            if bash -c "$comando" > /tmp/salida.txt 2>&1; then
               echo "| $nombre | ✅ |" >> .agent/verificacion.md
             else
               echo "| $nombre | ❌ |" >> .agent/verificacion.md
