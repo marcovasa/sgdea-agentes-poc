@@ -28,7 +28,7 @@ def generar_numero(session: Session, tipo: TipoPQRSDF, fecha: date) -> str:
         select(func.count()).select_from(Radicado).where(Radicado.numero.like(patron))
     )
     consecutivo = (existentes or 0) + 1
-    return f"{fecha.year}-{prefijo}-{consecutivo}"
+    return f"{fecha.year}-{prefijo}-{consecutivo:06d}"
 
 
 def crear_radicado(session: Session, datos: RadicadoCrear) -> Radicado:
