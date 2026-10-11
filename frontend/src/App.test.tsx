@@ -51,4 +51,31 @@ describe('App', () => {
     await screen.findByText('2026-Q-1')
     expect(screen.getByText('—')).toBeInTheDocument()
   })
+
+  it('muestra guion cuando el remitente es vacío', async () => {
+    mockFetch({
+      total: 1,
+      items: [
+        {
+          numero: '2026-R-1',
+          tipo: 'RECLAMO',
+          asunto: 'Reclamo antiguo',
+          descripcion: '',
+          remitente: '',
+          estado: 'RADICADO',
+          fecha_radicacion: '2026-03-04',
+          fecha_vencimiento: '2026-03-19',
+        },
+      ],
+    })
+    render(<App />)
+    await screen.findByText('2026-R-1')
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('el campo remitente es obligatorio en el formulario', () => {
+    mockFetch({ total: 0, items: [] })
+    render(<App />)
+    expect(screen.getByLabelText('Remitente')).toBeRequired()
+  })
 })
