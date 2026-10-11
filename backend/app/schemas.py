@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import TipoPQRSDF
 
@@ -11,6 +11,18 @@ class RadicadoCrear(BaseModel):
     descripcion: str = Field(default="", max_length=5000)
     remitente: str | None = None
     fecha_radicacion: date | None = None
+
+
+class RadicadoAnular(BaseModel):
+    motivo: str = Field(min_length=10)
+
+    @field_validator("motivo")
+    @classmethod
+    def validar_motivo(cls, v: str) -> str:
+        v_limpio = v.strip()
+        if len(v_limpio) < 10:
+            raise ValueError("El motivo debe tener al menos 10 caracteres")
+        return v_limpio
 
 
 class RadicadoSalida(BaseModel):
@@ -24,6 +36,8 @@ class RadicadoSalida(BaseModel):
     estado: str
     fecha_radicacion: date
     fecha_vencimiento: date
+    motivo_anulacion: str | None = None
+    fecha_anulacion: date | None = None
 
 
 class ListaRadicados(BaseModel):

@@ -83,6 +83,29 @@ button {
   justify-self: start;
 }
 
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-anular {
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+}
+
+.btn-anular:hover:not(:disabled) {
+  background: var(--error);
+  color: #fff;
+}
+
+.btn-anular:disabled {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
 .busqueda {
   display: flex;
   gap: 8px;

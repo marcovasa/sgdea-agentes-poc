@@ -1,3 +1,11 @@
+from datetime import date
+
+from sqlalchemy import select
+
+from app.db import SessionLocal
+from app.models import EstadoRadicado, Radicado
+
+
 def _radicar(client, **extra):
     datos = {
         "tipo": "PETICION",
@@ -54,3 +62,76 @@ def test_listar_y_buscar(client):
 
 def test_asunto_muy_corto_422(client):
     assert _radicar(client, asunto="ab").status_code == 422
+
+
+def test_anular_radicado_exitoso(client):
+    numero = _radicar(client).json()["numero"]
+    motivo = "Documento duplicado por error del usuario"
+    r = client.post(f"/api/radicados/{numero}/anular", json={"motivo": motivo})
+    assert r.status_code == 200
+    cuerpo = r.json()
+    assert cuerpo["estado"] == "ANULADO"
+    assert cuerpo["motivo_anulacion"] == motivo
+    assert cuerpo["fecha_anulacion"] == date.today().isoformat()
+
+
+def test_anular_motivo_menor_a_10_caracteres_422(client):
+    numero = _radicar(client).json()["numero"]
+    r = client.post(f"/api/radicados/{numero}/anular", json={"motivo": "corto"})
+    assert r.status_code == 422
+
+
+def test_anular_sin_motivo_422(client):
+    numero = _radicar(client).json()["numero"]
+    r = client.post(f"/api/radicados/{numero}/anular", json={})
+    assert r.status_code == 422
+
+
+def test_anular_inexistente_404(client):
+    r = client.post(
+        "/api/radicados/2026-P-999999/anular",
+        json={"motivo": "Motivo suficientemente largo"},
+    )
+    assert r.status_code == 404
+
+
+def test_anular_ya_anulado_409(client):
+    numero = _radicar(client).json()["numero"]
+    r1 = client.post(
+        f"/api/radicados/{numero}/anular",
+        json={"motivo": "Motivo suficientemente largo"},
+    )
+    assert r1.status_code == 200
+    r2 = client.post(
+        f"/api/radicados/{numero}/anular",
+        json={"motivo": "Otro motivo suficientemente largo"},
+    )
+    assert r2.status_code == 409
+
+
+def test_anular_respondido_409(client):
+    numero = _radicar(client).json()["numero"]
+    with SessionLocal() as session:
+        radicado = session.scalar(select(Radicado).where(Radicado.numero == numero))
+        radicado.estado = EstadoRadicado.RESPONDIDO
+        session.commit()
+
+    r = client.post(
+        f"/api/radicados/{numero}/anular",
+        json={"motivo": "Motivo suficientemente largo"},
+    )
+    assert r.status_code == 409
+
+
+def test_radicado_anulado_aparece_en_listado(client):
+    numero = _radicar(client).json()["numero"]
+    client.post(
+        f"/api/radicados/{numero}/anular",
+        json={"motivo": "Motivo suficientemente largo"},
+    )
+    r = client.get("/api/radicados")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    encontrado = next(item for item in items if item["numero"] == numero)
+    assert encontrado["estado"] == "ANULADO"
+    assert encontrado["motivo_anulacion"] == "Motivo suficientemente largo"
