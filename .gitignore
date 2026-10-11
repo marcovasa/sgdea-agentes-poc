@@ -13,7 +13,6 @@ dist/
 coverage/
 
 # Agentes y entorno
-.agent/
 .gemini/
 gemini-artifacts/
 gha-creds*
