@@ -200,7 +200,7 @@ jobs:
           chequeo "Frontend · vitest"  "cd frontend && npm test"
           chequeo "Frontend · build"   "cd frontend && npm run build"
 
-          git add -A -- . ':(exclude).agent' ':(exclude).gemini' ':(exclude)frontend/dist'
+          git add -A -- . ':(exclude).agent' ':(exclude).gemini' ':(exclude)gemini-artifacts' ':(exclude)gha-creds*' ':(exclude)frontend/dist'
           git diff --cached --binary > .agent/cambios.patch
           git diff --cached --stat > .agent/estadistica.txt
           archivos=$(git diff --cached --name-only | wc -l)
