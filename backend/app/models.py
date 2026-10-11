@@ -21,6 +21,7 @@ class EstadoRadicado(StrEnum):
     RADICADO = "RADICADO"
     EN_TRAMITE = "EN_TRAMITE"
     RESPONDIDO = "RESPONDIDO"
+    ANULADO = "ANULADO"
 
 
 class Radicado(Base):
@@ -35,4 +36,6 @@ class Radicado(Base):
     estado: Mapped[str] = mapped_column(String(20), default=EstadoRadicado.RADICADO)
     fecha_radicacion: Mapped[date] = mapped_column(Date)
     fecha_vencimiento: Mapped[date] = mapped_column(Date)
+    motivo_anulacion: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    fecha_anulacion: Mapped[date | None] = mapped_column(Date, nullable=True, default=None)
     creado_en: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

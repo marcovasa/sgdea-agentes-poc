@@ -19,6 +19,8 @@ export interface Radicado {
   estado: string
   fecha_radicacion: string
   fecha_vencimiento: string
+  motivo_anulacion?: string | null
+  fecha_anulacion?: string | null
 }
 
 export interface ListaRadicados {
@@ -31,4 +33,8 @@ export interface NuevoRadicado {
   asunto: string
   descripcion: string
   remitente: string
+}
+
+export interface RadicadoAnular {
+  motivo: string
 }

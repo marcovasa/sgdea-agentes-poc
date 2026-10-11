@@ -31,3 +31,10 @@ export function crearRadicado(datos: NuevoRadicado): Promise<Radicado> {
     body: JSON.stringify(datos),
   })
 }
+
+export function anularRadicado(numero: string, motivo: string): Promise<Radicado> {
+  return solicitar<Radicado>(`/api/radicados/${encodeURIComponent(numero)}/anular`, {
+    method: 'POST',
+    body: JSON.stringify({ motivo }),
+  })
+}

@@ -5,7 +5,7 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Radicado, TipoPQRSDF
+from app.models import EstadoRadicado, Radicado, TipoPQRSDF
 from app.schemas import RadicadoCrear
 from app.services.plazos import calcular_vencimiento
 
@@ -57,3 +57,12 @@ def buscar_radicados(session: Session, q: str | None = None) -> list[Radicado]:
 
 def obtener_por_numero(session: Session, numero: str) -> Radicado | None:
     return session.scalar(select(Radicado).where(Radicado.numero == numero))
+
+
+def anular_radicado(session: Session, radicado: Radicado, motivo: str) -> Radicado:
+    radicado.estado = EstadoRadicado.ANULADO.value
+    radicado.motivo_anulacion = motivo.strip()
+    radicado.fecha_anulacion = date.today()
+    session.commit()
+    session.refresh(radicado)
+    return radicado

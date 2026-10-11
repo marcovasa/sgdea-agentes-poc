@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { crearRadicado, listarRadicados } from './api'
+import { anularRadicado, crearRadicado, listarRadicados } from './api'
 import { TIPOS, type NuevoRadicado, type Radicado } from './types'
 import './App.css'
 
@@ -40,6 +40,21 @@ export default function App() {
       setMensaje(`Radicado ${nuevo.numero} creado. Vence el ${nuevo.fecha_vencimiento}.`)
       setForm(VACIO)
       await cargar()
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  const anular = async (numero: string) => {
+    const motivo = window.prompt('Ingrese el motivo de anulación (mínimo 10 caracteres):')
+    if (motivo === null) return
+    const motivoLimpio = motivo.trim()
+    if (!motivoLimpio) return
+    try {
+      await anularRadicado(numero, motivoLimpio)
+      setMensaje(`Radicado ${numero} anulado exitosamente.`)
+      setError(null)
+      await cargar(busqueda.trim() || undefined)
     } catch (err) {
       setError((err as Error).message)
     }
@@ -118,6 +133,7 @@ export default function App() {
               <th>Remitente</th>
               <th>Estado</th>
               <th>Vence</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -129,6 +145,16 @@ export default function App() {
                 <td>{r.remitente ?? '—'}</td>
                 <td>{r.estado}</td>
                 <td>{r.fecha_vencimiento}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn-anular"
+                    onClick={() => void anular(r.numero)}
+                    disabled={r.estado === 'ANULADO' || r.estado === 'RESPONDIDO'}
+                  >
+                    Anular
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
