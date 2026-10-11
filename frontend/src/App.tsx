@@ -7,7 +7,6 @@ const VACIO: NuevoRadicado = { tipo: 'PETICION', asunto: '', descripcion: '', re
 
 export default function App() {
   const [items, setItems] = useState<Radicado[]>([])
-  const [totalGeneral, setTotalGeneral] = useState(0)
   const [busqueda, setBusqueda] = useState('')
   const [form, setForm] = useState<NuevoRadicado>(VACIO)
   const [mensaje, setMensaje] = useState<string | null>(null)
@@ -17,7 +16,6 @@ export default function App() {
     try {
       const datos = await listarRadicados(q)
       setItems(datos.items)
-      if (!q) setTotalGeneral(datos.total)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -106,7 +104,7 @@ export default function App() {
           <button type="submit">Buscar</button>
         </form>
         <p className="contador" data-testid="contador">
-          Mostrando {totalGeneral} radicados
+          Mostrando {items.length} radicados
         </p>
         {error && <p className="error">{error}</p>}
         <table>
