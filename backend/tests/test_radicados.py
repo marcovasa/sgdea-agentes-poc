@@ -1,3 +1,6 @@
+import re
+
+
 def _radicar(client, **extra):
     datos = {
         "tipo": "PETICION",
@@ -54,3 +57,26 @@ def test_listar_y_buscar(client):
 
 def test_asunto_muy_corto_422(client):
     assert _radicar(client, asunto="ab").status_code == 422
+
+
+def test_formato_numero_radicado_con_ceros_a_la_izquierda(client):
+    r1 = _radicar(client, fecha_radicacion="2026-03-02", tipo="PETICION")
+    assert r1.status_code == 201
+    numero1 = r1.json()["numero"]
+    assert numero1 == "2026-P-000001"
+    assert re.match(r"^\d{4}-[PQRSDCI]-\d{6}$", numero1)
+
+    r2 = _radicar(client, fecha_radicacion="2026-03-02", tipo="PETICION")
+    assert r2.status_code == 201
+    numero2 = r2.json()["numero"]
+    assert numero2 == "2026-P-000002"
+
+    r_queja = _radicar(client, fecha_radicacion="2026-03-02", tipo="QUEJA")
+    assert r_queja.status_code == 201
+    numero_queja = r_queja.json()["numero"]
+    assert numero_queja == "2026-Q-000001"
+
+    r_otro_ano = _radicar(client, fecha_radicacion="2027-01-15", tipo="PETICION")
+    assert r_otro_ano.status_code == 201
+    numero_otro_ano = r_otro_ano.json()["numero"]
+    assert numero_otro_ano == "2027-P-000001"
