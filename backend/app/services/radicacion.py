@@ -38,7 +38,7 @@ def crear_radicado(session: Session, datos: RadicadoCrear) -> Radicado:
         tipo=datos.tipo.value,
         asunto=datos.asunto.strip(),
         descripcion=datos.descripcion,
-        remitente=datos.remitente,
+        remitente=datos.remitente.strip(),
         fecha_radicacion=fecha,
         fecha_vencimiento=calcular_vencimiento(datos.tipo, fecha),
     )

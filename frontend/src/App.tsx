@@ -81,6 +81,7 @@ export default function App() {
             <input
               value={form.remitente}
               onChange={(e) => setForm({ ...form, remitente: e.target.value })}
+              required
             />
           </label>
           <label className="ancho">
@@ -126,7 +127,7 @@ export default function App() {
                 <td className="mono">{r.numero}</td>
                 <td>{r.tipo}</td>
                 <td>{r.asunto}</td>
-                <td>{r.remitente ?? '—'}</td>
+                <td>{r.remitente?.trim() || '—'}</td>
                 <td>{r.estado}</td>
                 <td>{r.fecha_vencimiento}</td>
               </tr>

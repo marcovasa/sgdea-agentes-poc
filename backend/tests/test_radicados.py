@@ -54,3 +54,57 @@ def test_listar_y_buscar(client):
 
 def test_asunto_muy_corto_422(client):
     assert _radicar(client, asunto="ab").status_code == 422
+
+
+def test_radicar_sin_remitente_422(client):
+    datos = {
+        "tipo": "PETICION",
+        "asunto": "Solicitud sin remitente",
+        "fecha_radicacion": "2026-03-02",
+    }
+    r = client.post("/api/radicados", json=datos)
+    assert r.status_code == 422
+
+
+def test_radicar_remitente_vacio_422(client):
+    assert _radicar(client, remitente="").status_code == 422
+
+
+def test_radicar_remitente_espacios_422(client):
+    assert _radicar(client, remitente="   ").status_code == 422
+
+
+def test_radicar_remitente_muy_corto_422(client):
+    assert _radicar(client, remitente="ab").status_code == 422
+
+
+def test_radicar_remitente_valido_201(client):
+    r = _radicar(client, remitente="Ana")
+    assert r.status_code == 201
+    assert r.json()["remitente"] == "Ana"
+
+
+def test_listar_radicado_antiguo_sin_remitente(client):
+    from datetime import date
+
+    from app.db import SessionLocal
+    from app.models import Radicado
+
+    with SessionLocal() as session:
+        radicado_antiguo = Radicado(
+            numero="2025-P-1",
+            tipo="PETICION",
+            asunto="Petición antigua sin remitente",
+            descripcion="",
+            remitente=None,
+            fecha_radicacion=date(2025, 1, 1),
+            fecha_vencimiento=date(2025, 1, 20),
+        )
+        session.add(radicado_antiguo)
+        session.commit()
+
+    r = client.get("/api/radicados")
+    assert r.status_code == 200
+    cuerpo = r.json()
+    assert cuerpo["total"] == 1
+    assert cuerpo["items"][0]["remitente"] is None
