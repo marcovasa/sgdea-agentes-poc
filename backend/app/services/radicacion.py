@@ -1,5 +1,6 @@
 """Reglas de negocio del módulo de radicación."""
 
+import unicodedata
 from datetime import date
 
 from sqlalchemy import func, select
@@ -48,11 +49,23 @@ def crear_radicado(session: Session, datos: RadicadoCrear) -> Radicado:
     return radicado
 
 
+def normalizar_texto(texto: str) -> str:
+    """Normaliza un texto a minúsculas y sin tildes ni marcas diacríticas."""
+    descompuesto = unicodedata.normalize("NFD", texto)
+    sin_diacriticos = "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
+    return sin_diacriticos.lower()
+
+
 def buscar_radicados(session: Session, q: str | None = None) -> list[Radicado]:
     radicados = list(session.scalars(select(Radicado).order_by(Radicado.id.desc())))
-    if not q:
+    if not q or not q.strip():
         return radicados
-    return [r for r in radicados if q in r.asunto or q in r.numero]
+    termino = normalizar_texto(q.strip())
+    return [
+        r
+        for r in radicados
+        if termino in normalizar_texto(r.asunto) or termino in normalizar_texto(r.numero)
+    ]
 
 
 def obtener_por_numero(session: Session, numero: str) -> Radicado | None:

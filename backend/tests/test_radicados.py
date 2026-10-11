@@ -54,3 +54,33 @@ def test_listar_y_buscar(client):
 
 def test_asunto_muy_corto_422(client):
     assert _radicar(client, asunto="ab").status_code == 422
+
+
+def test_buscar_insensible_mayusculas_y_tildes(client):
+    r = _radicar(client, asunto="Petición de copia de resolución")
+    numero = r.json()["numero"]
+
+    for termino in ["peticion", "PETICION", "Petición"]:
+        res = client.get("/api/radicados", params={"q": termino}).json()
+        assert res["total"] == 1, f"Falló buscando con '{termino}'"
+        assert res["items"][0]["numero"] == numero
+
+
+def test_buscar_por_numero_sigue_funcionando(client):
+    r = _radicar(client, asunto="Solicitud de información general")
+    numero = r.json()["numero"]
+
+    res_exacto = client.get("/api/radicados", params={"q": numero}).json()
+    assert res_exacto["total"] == 1
+    assert res_exacto["items"][0]["numero"] == numero
+
+    res_minusculas = client.get("/api/radicados", params={"q": numero.lower()}).json()
+    assert res_minusculas["total"] == 1
+    assert res_minusculas["items"][0]["numero"] == numero
+
+
+def test_buscar_sin_coincidencias_devuelve_cero(client):
+    _radicar(client, asunto="Derecho de petición sobre contrato")
+    res = client.get("/api/radicados", params={"q": "inexistente"}).json()
+    assert res["total"] == 0
+    assert res["items"] == []
