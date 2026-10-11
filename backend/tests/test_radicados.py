@@ -25,6 +25,7 @@ def test_radicar_crea_radicado(client):
     assert cuerpo["numero"].startswith("2026-P-")
     assert cuerpo["estado"] == "RADICADO"
     assert cuerpo["tipo"] == "PETICION"
+    assert cuerpo["fecha_vencimiento"] == "2026-03-24"
 
 
 def test_consecutivo_aumenta_por_tipo(client):
