@@ -54,10 +54,10 @@ jobs:
           workflow_name: revision-ia
           settings: |-
             {
-              "model": { "maxSessionTurns": 30 },
+              "model": { "maxSessionTurns": 50 },
               "tools": {
                 "core": ["list_directory", "read_file", "read_many_files", "glob", "grep_search",
-                         "search_file_content", "write_file"]
+                         "search_file_content", "write_file", "run_shell_command(cat)"]
               }
             }
           prompt: |-
